@@ -25,7 +25,7 @@
           <mxGeometry x="500" y="100" width="220" height="100" as="geometry" />
         </mxCell>
 
-        <mxCell id="6" value="POST /api/chat&#xa;JSON: { messages }" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ede9fe;strokeColor=#8b5cf6;fontStyle=1;" vertex="1" parent="1">
+        <mxCell id="6" value="POST /api/chat&#xa;JSON: { messages, settings }" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ede9fe;strokeColor=#8b5cf6;fontStyle=1;" vertex="1" parent="1">
           <mxGeometry x="790" y="110" width="180" height="80" as="geometry" />
         </mxCell>
 
@@ -41,7 +41,7 @@
           <mxGeometry x="1040" y="140" width="220" height="70" as="geometry" />
         </mxCell>
 
-        <mxCell id="10" value="Gemini model&#xa;gemini-3-flash-preview" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#22c55e;fontStyle=1;" vertex="1" parent="1">
+        <mxCell id="10" value="Selected Gemini model&#xa;e.g. gemini-3-flash-preview" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#22c55e;fontStyle=1;" vertex="1" parent="1">
           <mxGeometry x="1320" y="140" width="220" height="70" as="geometry" />
         </mxCell>
 
@@ -86,6 +86,30 @@
         </mxCell>
 
         <mxCell id="21" value="" style="endArrow=block;endFill=1;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;strokeColor=#ec4899;" edge="1" parent="1" source="11" target="5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="23" value="Settings panel&#xa;app/components/ChatSettingsPanel.tsx&#xa;+ Tooltip.tsx&#xa;(model, temperature, top K, top P,&#xa;output tokens, frequency/presence&#xa;penalty, stop sequence, seed)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fae8ff;strokeColor=#c026d3;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="500" y="460" width="260" height="130" as="geometry" />
+        </mxCell>
+
+        <mxCell id="24" value="app/lib/chatSettings.ts&#xa;types, defaults, model options,&#xa;tooltip copy&#xa;(shared client + server)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#64748b;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="820" y="460" width="220" height="100" as="geometry" />
+        </mxCell>
+
+        <mxCell id="25" value="opens" style="endArrow=block;endFill=1;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;strokeColor=#ec4899;" edge="1" parent="1" source="5" target="23">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="26" value="updates settings" style="endArrow=block;endFill=1;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;strokeColor=#c026d3;" edge="1" parent="1" source="23" target="5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="27" value="reads defaults + labels" style="endArrow=block;endFill=1;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;strokeColor=#64748b;" edge="1" parent="1" source="23" target="24">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="28" value="reads defaults + clamps ranges" style="endArrow=block;endFill=1;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;strokeColor=#64748b;dashed=1;" edge="1" parent="1" source="7" target="24">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
       </root>
