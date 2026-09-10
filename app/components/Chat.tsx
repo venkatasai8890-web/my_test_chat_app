@@ -2,6 +2,8 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Menu, Plus, MessageCircle, Settings, HelpCircle } from "lucide-react";
+import ChatSettingsPanel from "./ChatSettingsPanel";
+import { ChatSettings, DEFAULT_SETTINGS } from "../lib/chatSettings";
 
 interface Message {
   role: "user" | "assistant";
@@ -20,6 +22,8 @@ export default function Chat() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [settings, setSettings] = useState<ChatSettings>(DEFAULT_SETTINGS);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const currentConv = conversations.find((c) => c.id === currentConvId);
@@ -67,6 +71,7 @@ export default function Chat() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: [...messages, userMessage],
+          settings,
         }),
       });
 
@@ -124,6 +129,14 @@ export default function Chat() {
 
   return (
     <div className="flex h-screen bg-gradient-to-br from-blue-100 via-blue-50 to-white">
+      {settingsOpen && (
+        <ChatSettingsPanel
+          settings={settings}
+          onChange={setSettings}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
       <div
         className={`transition-all duration-300 flex flex-col bg-white border-r border-gray-200 ${
@@ -166,7 +179,10 @@ export default function Chat() {
             <HelpCircle size={18} />
             Help & FAQ
           </button>
-          <button className="w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100 text-gray-600 text-sm transition-colors">
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-100 text-gray-600 text-sm transition-colors"
+          >
             <Settings size={18} />
             Settings
           </button>
