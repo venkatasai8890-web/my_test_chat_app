@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Menu, Plus, MessageCircle, Settings, HelpCircle } from "lucide-react";
 import ChatSettingsPanel from "./ChatSettingsPanel";
+import MessageActions from "./MessageActions";
 import { ChatSettings, DEFAULT_SETTINGS } from "../lib/chatSettings";
 
 interface Message {
@@ -250,6 +251,9 @@ export default function Chat() {
                   <p className="text-gray-900 leading-relaxed whitespace-pre-wrap">
                     {msg.content}
                   </p>
+                  {msg.role === "assistant" && (
+                    <MessageActions content={msg.content} />
+                  )}
                 </div>
                 {msg.role === "user" && (
                   <div className="flex-shrink-0 w-8 h-8 rounded-full bg-gradient-to-br from-green-400 to-green-600 flex items-center justify-center text-white font-semibold text-lg">
