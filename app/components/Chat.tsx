@@ -1,15 +1,36 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Menu, Plus, MessageCircle, Settings, HelpCircle } from "lucide-react";
-import ChatSettingsPanel from "./ChatSettingsPanel";
-import MessageActions from "./MessageActions";
-import { ChatSettings, DEFAULT_SETTINGS } from "../lib/chatSettings";
+import {
+  Menu,
+  Plus,
+  MessageCircle,
+  Settings,
+  HelpCircle,
+  ChevronDown,
+  Paperclip,
+} from "lucide-react";
+import { GEMINI_MODELS, DEFAULT_GEMINI_MODEL } from "@/app/lib/models";
+import {
+  DEFAULT_GENERATION_SETTINGS,
+  GenerationSettings,
+  clampGenerationSettings,
+} from "@/app/lib/settings";
+import SettingsPanel from "./SettingsPanel";
+import MessageActions, { MessageFeedback } from "./MessageActions";
+import AttachmentChip, { AttachmentState } from "./AttachmentChip";
+
+const ALLOWED_ATTACHMENT_EXTENSIONS = [".pdf", ".txt", ".md"];
 
 interface Message {
+  id: string;
   role: "user" | "assistant";
   content: string;
+  model?: string;
+  feedback?: MessageFeedback;
 }
+
+const generateId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
 interface Conversation {
   id: string;
@@ -23,9 +44,14 @@ export default function Chat() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [settings, setSettings] = useState<ChatSettings>(DEFAULT_SETTINGS);
+  const [selectedModel, setSelectedModel] = useState(DEFAULT_GEMINI_MODEL);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [generationSettings, setGenerationSettings] = useState<GenerationSettings>(
+    DEFAULT_GENERATION_SETTINGS
+  );
+  const [attachments, setAttachments] = useState<Record<string, AttachmentState>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const currentConv = conversations.find((c) => c.id === currentConvId);
   const messages = currentConv?.messages || [];
@@ -53,7 +79,8 @@ export default function Chat() {
     }
 
     const convId = currentConvId || Date.now().toString();
-    const userMessage: Message = { role: "user", content: input };
+    const userMessage: Message = { id: generateId(), role: "user", content: input };
+    const modelForRequest = selectedModel;
 
     setConversations((prev) =>
       prev.map((c) =>
@@ -72,7 +99,11 @@ export default function Chat() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: [...messages, userMessage],
-          settings,
+          model: modelForRequest,
+          settings: generationSettings,
+          ...(attachments[convId]?.status === "ready"
+            ? { conversationId: convId }
+            : {}),
         }),
       });
 
@@ -80,8 +111,11 @@ export default function Chat() {
 
       const data = await response.json();
       const assistantMessage: Message = {
+        id: generateId(),
         role: "assistant",
         content: data.text,
+        model: modelForRequest,
+        feedback: null,
       };
 
       setConversations((prev) =>
@@ -108,8 +142,11 @@ export default function Chat() {
                 messages: [
                   ...c.messages,
                   {
+                    id: generateId(),
                     role: "assistant",
                     content: "Sorry, I encountered an error. Please try again.",
+                    model: modelForRequest,
+                    feedback: null,
                   },
                 ],
               }
@@ -121,6 +158,109 @@ export default function Chat() {
     }
   };
 
+  const setMessageFeedback = (
+    convId: string,
+    messageId: string,
+    next: MessageFeedback
+  ) => {
+    const conv = conversations.find((c) => c.id === convId);
+    const msg = conv?.messages.find((m) => m.id === messageId);
+
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === convId
+          ? {
+              ...c,
+              messages: c.messages.map((m) =>
+                m.id === messageId ? { ...m, feedback: next } : m
+              ),
+            }
+          : c
+      )
+    );
+
+    fetch("/api/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversationId: convId,
+        messageId,
+        model: msg?.model ?? selectedModel,
+        feedback: next ?? "none",
+        content: msg?.content ?? "",
+      }),
+    }).catch((error) => {
+      console.error("Failed to record feedback:", error);
+    });
+  };
+
+  const handleAttachClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+
+    const extension = "." + (file.name.split(".").pop() || "").toLowerCase();
+    if (!ALLOWED_ATTACHMENT_EXTENSIONS.includes(extension)) {
+      alert(
+        `Unsupported file type. Allowed: ${ALLOWED_ATTACHMENT_EXTENSIONS.join(", ")}`
+      );
+      return;
+    }
+
+    if (!currentConvId) {
+      startNewChat();
+    }
+    const convId = currentConvId || Date.now().toString();
+
+    setAttachments((prev) => ({
+      ...prev,
+      [convId]: { filename: file.name, status: "uploading" },
+    }));
+
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("conversationId", convId);
+
+      const response = await fetch("/api/upload", {
+        method: "POST",
+        body: form,
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Upload failed");
+      }
+
+      setAttachments((prev) => ({
+        ...prev,
+        [convId]: { filename: data.filename || file.name, status: "ready" },
+      }));
+    } catch (error) {
+      console.error("Attachment upload failed:", error);
+      setAttachments((prev) => ({
+        ...prev,
+        [convId]: {
+          filename: file.name,
+          status: "error",
+          error: error instanceof Error ? error.message : "Upload failed",
+        },
+      }));
+    }
+  };
+
+  const removeAttachment = (convId: string) => {
+    setAttachments((prev) => {
+      const next = { ...prev };
+      delete next[convId];
+      return next;
+    });
+  };
+
   const suggestedPrompts = [
     "Explain quantum computing",
     "Write a Python function",
@@ -130,14 +270,6 @@ export default function Chat() {
 
   return (
     <div className="flex h-screen bg-gradient-to-br from-blue-100 via-blue-50 to-white">
-      {settingsOpen && (
-        <ChatSettingsPanel
-          settings={settings}
-          onChange={setSettings}
-          onClose={() => setSettingsOpen(false)}
-        />
-      )}
-
       {/* Sidebar */}
       <div
         className={`transition-all duration-300 flex flex-col bg-white border-r border-gray-200 ${
@@ -204,6 +336,25 @@ export default function Chat() {
               </button>
               <h1 className="text-2xl font-semibold text-gray-900">My Gemini App</h1>
             </div>
+
+            <div className="relative">
+              <select
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                aria-label="Select model"
+                className="appearance-none pl-3 pr-9 py-2 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-sm font-medium text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer transition-colors"
+              >
+                {GEMINI_MODELS.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown
+                size={16}
+                className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-500"
+              />
+            </div>
           </div>
         </div>
 
@@ -229,9 +380,9 @@ export default function Chat() {
               </div>
             )}
 
-            {messages.map((msg, idx) => (
+            {messages.map((msg) => (
               <div
-                key={idx}
+                key={msg.id}
                 className={`flex gap-4 py-6 animate-in fade-in ${
                   msg.role === "user" ? "justify-end" : "justify-start"
                 }`}
@@ -252,7 +403,24 @@ export default function Chat() {
                     {msg.content}
                   </p>
                   {msg.role === "assistant" && (
-                    <MessageActions content={msg.content} />
+                    <MessageActions
+                      content={msg.content}
+                      feedback={msg.feedback ?? null}
+                      onToggleLike={() =>
+                        setMessageFeedback(
+                          currentConvId as string,
+                          msg.id,
+                          msg.feedback === "like" ? null : "like"
+                        )
+                      }
+                      onToggleDislike={() =>
+                        setMessageFeedback(
+                          currentConvId as string,
+                          msg.id,
+                          msg.feedback === "dislike" ? null : "dislike"
+                        )
+                      }
+                    />
                   )}
                 </div>
                 {msg.role === "user" && (
@@ -283,7 +451,34 @@ export default function Chat() {
         {/* Input */}
         <div className="bg-white bg-opacity-80 backdrop-blur-sm border-t border-gray-200 py-4">
           <div className="max-w-4xl mx-auto px-4">
+            {currentConvId && attachments[currentConvId] && (
+              <div className="mb-2">
+                <AttachmentChip
+                  attachment={attachments[currentConvId]}
+                  onRemove={() => removeAttachment(currentConvId)}
+                />
+              </div>
+            )}
             <form onSubmit={handleSubmit} className="flex gap-3">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ALLOWED_ATTACHMENT_EXTENSIONS.join(",")}
+                onChange={handleFileSelected}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={handleAttachClick}
+                disabled={
+                  !!currentConvId && attachments[currentConvId]?.status === "uploading"
+                }
+                aria-label="Attach a file"
+                title="Attach a file"
+                className="p-3 rounded-full border border-gray-300 bg-white hover:bg-gray-50 text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                <Paperclip size={18} />
+              </button>
               <input
                 type="text"
                 value={input}
@@ -303,6 +498,16 @@ export default function Chat() {
           </div>
         </div>
       </div>
+
+      <SettingsPanel
+        open={settingsOpen}
+        initialSettings={generationSettings}
+        onSave={(settings) => {
+          setGenerationSettings(clampGenerationSettings(settings));
+          setSettingsOpen(false);
+        }}
+        onClose={() => setSettingsOpen(false)}
+      />
     </div>
   );
 }

@@ -1,36 +1,36 @@
 import { GoogleGenAI } from "@google/genai";
 import { NextRequest, NextResponse } from "next/server";
-import { ChatSettings, DEFAULT_SETTINGS } from "../../lib/chatSettings";
+import { DEFAULT_GEMINI_MODEL, isSupportedGeminiModel } from "@/app/lib/models";
+import { clampGenerationSettings, toGenerateContentConfig } from "@/app/lib/settings";
+import { retrieveChunks } from "@/app/lib/rag";
 
 export const runtime = "nodejs";
 
-const clamp = (value: number, min: number, max: number) =>
-  Math.min(max, Math.max(min, value));
+function buildRagSystemInstruction(chunks: { content: string; source: string | null; page_number: number | null }[]): string {
+  const excerpts = chunks
+    .map((c, i) => {
+      const label = [c.source, c.page_number ? `page ${c.page_number}` : null]
+        .filter(Boolean)
+        .join(", ");
+      return `[Excerpt ${i + 1}${label ? ` — ${label}` : ""}]\n${c.content}`;
+    })
+    .join("\n\n");
 
-function buildGenerationConfig(settings: Partial<ChatSettings> | undefined) {
-  const s = { ...DEFAULT_SETTINGS, ...settings };
-
-  return {
-    temperature: clamp(s.temperature, 0, 2),
-    topK:
-      s.topK !== undefined && s.topK !== null
-        ? Math.max(1, Math.round(s.topK))
-        : undefined,
-    topP: s.topP !== undefined && s.topP !== null ? clamp(s.topP, 0, 1) : undefined,
-    maxOutputTokens:
-      s.maxOutputTokens !== undefined && s.maxOutputTokens !== null
-        ? Math.max(1, Math.round(s.maxOutputTokens))
-        : undefined,
-    frequencyPenalty: clamp(s.frequencyPenalty, -2, 2),
-    presencePenalty: clamp(s.presencePenalty, -2, 2),
-    stopSequences: s.stopSequence ? [s.stopSequence] : undefined,
-    seed: s.seed !== undefined && s.seed !== null ? Math.round(s.seed) : undefined,
-  };
+  return (
+    "You are answering the user's question using excerpts from a document " +
+    "they uploaded. Use only these excerpts to answer; if the answer isn't " +
+    "contained in them, say so clearly. Cite page numbers when available.\n\n" +
+    `Excerpts:\n${excerpts}`
+  );
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const { messages, settings } = await request.json();
+    const { messages, model, settings, conversationId } = await request.json();
+    const selectedModel = isSupportedGeminiModel(model)
+      ? model
+      : DEFAULT_GEMINI_MODEL;
+    const generationSettings = clampGenerationSettings(settings);
 
     const apiKey = process.env.GOOGLE_GENAI_API_KEY;
     if (!apiKey) {
@@ -50,11 +50,39 @@ export async function POST(request: NextRequest) {
       })
     );
 
-    const model = settings?.model || DEFAULT_SETTINGS.model;
-    const config = buildGenerationConfig(settings);
+    // If the conversation has an attached, successfully-ingested document,
+    // retrieve relevant chunks and inject them as a system instruction.
+    // Retrieval failures (e.g. rag-service not running) never break chat —
+    // we log and fall back to a normal, context-free response.
+    let ragSystemInstruction: string | undefined;
+    if (typeof conversationId === "string" && conversationId.trim()) {
+      const lastUserMessage = [...messages]
+        .reverse()
+        .find((m: { role: string; content: string }) => m.role === "user");
+      if (lastUserMessage) {
+        try {
+          const chunks = await retrieveChunks(
+            lastUserMessage.content,
+            conversationId
+          );
+          if (chunks.length > 0) {
+            ragSystemInstruction = buildRagSystemInstruction(chunks);
+          }
+        } catch (error) {
+          console.error("RAG retrieval failed, continuing without context:", error);
+        }
+      }
+    }
+
+    const config = {
+      ...toGenerateContentConfig(generationSettings),
+      ...(ragSystemInstruction
+        ? { systemInstruction: ragSystemInstruction }
+        : {}),
+    };
 
     const response = await ai.models.generateContent({
-      model,
+      model: selectedModel,
       contents,
       config,
     });

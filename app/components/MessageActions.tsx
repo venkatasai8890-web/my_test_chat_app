@@ -1,31 +1,24 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Copy, Check, Smile, ThumbsUp, ThumbsDown } from "lucide-react";
+import { useState } from "react";
+import { ThumbsUp, ThumbsDown, Copy, Check } from "lucide-react";
 
-const REACTIONS = ["👍", "❤️", "😂", "😮", "😢"];
+export type MessageFeedback = "like" | "dislike" | null;
 
 interface MessageActionsProps {
   content: string;
+  feedback: MessageFeedback;
+  onToggleLike: () => void;
+  onToggleDislike: () => void;
 }
 
-export default function MessageActions({ content }: MessageActionsProps) {
+export default function MessageActions({
+  content,
+  feedback,
+  onToggleLike,
+  onToggleDislike,
+}: MessageActionsProps) {
   const [copied, setCopied] = useState(false);
-  const [reactionOpen, setReactionOpen] = useState(false);
-  const [reaction, setReaction] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<"like" | "dislike" | null>(null);
-  const reactionRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!reactionOpen) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (reactionRef.current && !reactionRef.current.contains(e.target as Node)) {
-        setReactionOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [reactionOpen]);
 
   const handleCopy = async () => {
     try {
@@ -33,104 +26,49 @@ export default function MessageActions({ content }: MessageActionsProps) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch (error) {
-      console.error("Failed to copy message:", error);
+      console.error("Failed to copy:", error);
     }
   };
 
-  const toggleReaction = (emoji: string) => {
-    setReaction((prev) => (prev === emoji ? null : emoji));
-    setReactionOpen(false);
-  };
-
-  const toggleFeedback = (type: "like" | "dislike") => {
-    setFeedback((prev) => (prev === type ? null : type));
-  };
-
-  const feedbackMessage =
-    feedback === "like"
-      ? "Thanks for your feedback!"
-      : feedback === "dislike"
-      ? "Thanks for your feedback. We'll use it to improve responses."
-      : null;
+  const baseBtn =
+    "p-1.5 rounded-lg transition-colors text-gray-400 hover:text-gray-700 hover:bg-gray-100";
 
   return (
-    <div className="mt-2">
-      <div className="flex items-center gap-1">
-        <button
-          type="button"
-          onClick={handleCopy}
-          title="Copy"
-          aria-label="Copy response"
-          className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 transition-colors"
-        >
-          {copied ? <Check size={16} className="text-green-600" /> : <Copy size={16} />}
-        </button>
-
-        <div className="relative" ref={reactionRef}>
-          <button
-            type="button"
-            onClick={() => setReactionOpen((prev) => !prev)}
-            title="React"
-            aria-label="React to response"
-            className={`p-1.5 rounded-lg hover:bg-gray-100 transition-colors ${
-              reaction ? "text-blue-600" : "text-gray-500"
-            }`}
-          >
-            {reaction ? (
-              <span className="text-base leading-none">{reaction}</span>
-            ) : (
-              <Smile size={16} />
-            )}
-          </button>
-
-          {reactionOpen && (
-            <div className="absolute left-0 top-full mt-1 flex gap-1 bg-white border border-gray-200 rounded-full shadow-md px-2 py-1 z-10">
-              {REACTIONS.map((emoji) => (
-                <button
-                  type="button"
-                  key={emoji}
-                  onClick={() => toggleReaction(emoji)}
-                  className={`text-base p-1 rounded-full hover:bg-gray-100 transition-colors ${
-                    reaction === emoji ? "bg-blue-100" : ""
-                  }`}
-                >
-                  {emoji}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <button
-          type="button"
-          onClick={() => toggleFeedback("like")}
-          title="Like"
-          aria-label="Like response"
-          aria-pressed={feedback === "like"}
-          className={`p-1.5 rounded-lg hover:bg-gray-100 transition-colors ${
-            feedback === "like" ? "text-blue-600 bg-blue-50" : "text-gray-500"
-          }`}
-        >
-          <ThumbsUp size={16} fill={feedback === "like" ? "currentColor" : "none"} />
-        </button>
-
-        <button
-          type="button"
-          onClick={() => toggleFeedback("dislike")}
-          title="Dislike"
-          aria-label="Dislike response"
-          aria-pressed={feedback === "dislike"}
-          className={`p-1.5 rounded-lg hover:bg-gray-100 transition-colors ${
-            feedback === "dislike" ? "text-red-600 bg-red-50" : "text-gray-500"
-          }`}
-        >
-          <ThumbsDown size={16} fill={feedback === "dislike" ? "currentColor" : "none"} />
-        </button>
-      </div>
-
-      {feedbackMessage && (
-        <p className="text-xs text-gray-500 mt-1">{feedbackMessage}</p>
-      )}
+    <div className="flex items-center gap-1 mt-1.5">
+      <button
+        type="button"
+        onClick={onToggleLike}
+        aria-pressed={feedback === "like"}
+        aria-label="Like this response"
+        title="Like"
+        className={`${baseBtn} ${
+          feedback === "like" ? "text-blue-600 hover:text-blue-600 bg-blue-50 hover:bg-blue-50" : ""
+        }`}
+      >
+        <ThumbsUp size={14} fill={feedback === "like" ? "currentColor" : "none"} />
+      </button>
+      <button
+        type="button"
+        onClick={onToggleDislike}
+        aria-pressed={feedback === "dislike"}
+        aria-label="Dislike this response"
+        title="Dislike"
+        className={`${baseBtn} ${
+          feedback === "dislike" ? "text-red-600 hover:text-red-600 bg-red-50 hover:bg-red-50" : ""
+        }`}
+      >
+        <ThumbsDown size={14} fill={feedback === "dislike" ? "currentColor" : "none"} />
+      </button>
+      <button
+        type="button"
+        onClick={handleCopy}
+        aria-label="Copy response"
+        title="Copy"
+        className={baseBtn}
+      >
+        {copied ? <Check size={14} className="text-green-600" /> : <Copy size={14} />}
+      </button>
+      {copied && <span className="text-xs text-gray-500">Copied</span>}
     </div>
   );
 }
