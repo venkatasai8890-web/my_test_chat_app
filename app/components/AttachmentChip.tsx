@@ -4,9 +4,13 @@ import { FileText, Loader2, X, AlertCircle } from "lucide-react";
 
 export type AttachmentStatus = "uploading" | "ready" | "error";
 
+export type VectorDb = "pinecone" | "qdrant";
+
 export interface AttachmentState {
   filename: string;
   status: AttachmentStatus;
+  // The vector store this document was indexed into; chat retrieves from it.
+  vectorDb: VectorDb;
   error?: string;
 }
 
@@ -38,6 +42,11 @@ export default function AttachmentChip({ attachment, onRemove }: AttachmentChipP
         {isError && "Failed: "}
         {attachment.filename}
       </span>
+      {attachment.status === "ready" && (
+        <span className="text-xs opacity-70">
+          · {attachment.vectorDb === "qdrant" ? "Qdrant" : "Pinecone"}
+        </span>
+      )}
 
       <button
         type="button"

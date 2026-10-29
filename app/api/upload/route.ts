@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ingestFile, isRagServiceConfigured } from "@/app/lib/rag";
+import { ingestFile, isRagServiceConfigured, parseVectorDb } from "@/app/lib/rag";
 
 export const runtime = "nodejs";
 
@@ -18,6 +18,7 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const file = formData.get("file");
     const conversationId = formData.get("conversationId");
+    const vectorDb = parseVectorDb(formData.get("vectorDb"));
 
     if (!(file instanceof File)) {
       return NextResponse.json({ error: "Missing file" }, { status: 400 });
@@ -25,6 +26,13 @@ export async function POST(request: NextRequest) {
     if (typeof conversationId !== "string" || !conversationId.trim()) {
       return NextResponse.json(
         { error: "Missing conversationId" },
+        { status: 400 }
+      );
+    }
+
+    if (!vectorDb) {
+      return NextResponse.json(
+        { error: "Unsupported vectorDb. Allowed: pinecone, qdrant" },
         { status: 400 }
       );
     }
@@ -45,12 +53,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = await ingestFile(file, conversationId);
+    const result = await ingestFile(file, conversationId, vectorDb);
 
     return NextResponse.json({
       ok: true,
       filename: result.filename,
       chunks: result.chunks,
+      vectorDb,
     });
   } catch (error) {
     console.error("Upload API error:", error);

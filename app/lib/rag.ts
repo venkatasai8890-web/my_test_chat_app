@@ -1,6 +1,17 @@
 // Server-only client for the local rag-service (see rag-service/README.md).
 // Never imported by client components — only by Route Handlers.
 
+export type VectorDb = "pinecone" | "qdrant";
+
+export const DEFAULT_VECTOR_DB: VectorDb = "pinecone";
+
+// Accepts only known vector stores; anything missing falls back to Pinecone
+// so callers that don't send vectorDb keep the original behavior.
+export function parseVectorDb(value: unknown): VectorDb | null {
+  if (value === undefined || value === null || value === "") return DEFAULT_VECTOR_DB;
+  return value === "pinecone" || value === "qdrant" ? value : null;
+}
+
 export interface RetrievedChunk {
   content: string;
   source: string | null;
@@ -20,7 +31,8 @@ export function isRagServiceConfigured(): boolean {
 
 export async function ingestFile(
   file: File,
-  namespace: string
+  namespace: string,
+  vectorDb: VectorDb = DEFAULT_VECTOR_DB
 ): Promise<{ chunks: number; filename: string }> {
   const config = getRagServiceConfig();
   if (!config) {
@@ -32,6 +44,7 @@ export async function ingestFile(
   const form = new FormData();
   form.append("namespace", namespace);
   form.append("file", file);
+  form.append("vector_db", vectorDb);
 
   const res = await fetch(`${config.url}/ingest`, {
     method: "POST",
@@ -50,7 +63,8 @@ export async function ingestFile(
 export async function retrieveChunks(
   query: string,
   namespace: string,
-  k = 6
+  k = 6,
+  vectorDb: VectorDb = DEFAULT_VECTOR_DB
 ): Promise<RetrievedChunk[]> {
   const config = getRagServiceConfig();
   if (!config) {
@@ -65,7 +79,7 @@ export async function retrieveChunks(
       "Content-Type": "application/json",
       "X-RAG-Service-Token": config.token,
     },
-    body: JSON.stringify({ query, namespace, k }),
+    body: JSON.stringify({ query, namespace, k, vector_db: vectorDb }),
   });
 
   if (!res.ok) {

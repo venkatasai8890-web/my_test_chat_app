@@ -9,6 +9,10 @@ import {
   HelpCircle,
   ChevronDown,
   Paperclip,
+  Mic,
+  MicOff,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import { GEMINI_MODELS, DEFAULT_GEMINI_MODEL } from "@/app/lib/models";
 import {
@@ -18,7 +22,8 @@ import {
 } from "@/app/lib/settings";
 import SettingsPanel from "./SettingsPanel";
 import MessageActions, { MessageFeedback } from "./MessageActions";
-import AttachmentChip, { AttachmentState } from "./AttachmentChip";
+import AttachmentChip, { AttachmentState, VectorDb } from "./AttachmentChip";
+import { useVoiceChat } from "@/app/hooks/useVoiceChat";
 
 const ALLOWED_ATTACHMENT_EXTENSIONS = [".pdf", ".txt", ".md"];
 
@@ -50,11 +55,30 @@ export default function Chat() {
     DEFAULT_GENERATION_SETTINGS
   );
   const [attachments, setAttachments] = useState<Record<string, AttachmentState>>({});
+  const [activeView, setActiveView] = useState<"chat" | "document-qa">("chat");
+  const [vectorDb, setVectorDb] = useState<VectorDb>("pinecone");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const voice = useVoiceChat();
+  // Guards against a second send starting before `loading` re-renders.
+  const sendingRef = useRef(false);
+  // Voice transcripts arrive asynchronously, so they go through refs that
+  // always point at the latest render's send function and conversation.
+  const sendMessageRef = useRef<(text: string, options?: { fromVoice?: boolean }) => void>(
+    () => {}
+  );
+  const currentConvIdRef = useRef(currentConvId);
 
   const currentConv = conversations.find((c) => c.id === currentConvId);
   const messages = currentConv?.messages || [];
+
+  // Once a document is indexed in this conversation, its vector store is fixed:
+  // the selector shows that store and is locked until a new chat is started.
+  const currentAttachment = currentConvId ? attachments[currentConvId] : undefined;
+  const vectorDbLocked = currentAttachment?.status === "ready";
+  const effectiveVectorDb: VectorDb = vectorDbLocked
+    ? currentAttachment.vectorDb
+    : vectorDb;
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -68,18 +92,18 @@ export default function Chat() {
     const newId = Date.now().toString();
     setConversations((prev) => [...prev, { id: newId, title: "New chat", messages: [] }]);
     setCurrentConvId(newId);
+    return newId;
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || loading) return;
+  const sendMessage = async (
+    text: string,
+    { fromVoice = false }: { fromVoice?: boolean } = {}
+  ) => {
+    if (!text.trim() || loading || sendingRef.current) return;
+    sendingRef.current = true;
 
-    if (!currentConvId) {
-      startNewChat();
-    }
-
-    const convId = currentConvId || Date.now().toString();
-    const userMessage: Message = { id: generateId(), role: "user", content: input };
+    const convId = currentConvId ?? startNewChat();
+    const userMessage: Message = { id: generateId(), role: "user", content: text };
     const modelForRequest = selectedModel;
 
     setConversations((prev) =>
@@ -90,7 +114,8 @@ export default function Chat() {
       )
     );
 
-    setInput("");
+    // A voice message leaves any typed draft in the input untouched.
+    if (!fromVoice) setInput("");
     setLoading(true);
 
     try {
@@ -102,7 +127,7 @@ export default function Chat() {
           model: modelForRequest,
           settings: generationSettings,
           ...(attachments[convId]?.status === "ready"
-            ? { conversationId: convId }
+            ? { conversationId: convId, vectorDb: attachments[convId].vectorDb }
             : {}),
         }),
       });
@@ -125,6 +150,12 @@ export default function Chat() {
             : c
         )
       );
+
+      // Only successful replies to voice messages are spoken, and only if the
+      // user is still viewing that conversation.
+      if (fromVoice && currentConvIdRef.current === convId) {
+        voice.speak(assistantMessage.content);
+      }
 
       if (messages.length === 0) {
         const title = userMessage.content.substring(0, 30) + (userMessage.content.length > 30 ? "..." : "");
@@ -154,8 +185,46 @@ export default function Chat() {
         )
       );
     } finally {
+      sendingRef.current = false;
       setLoading(false);
     }
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    sendMessage(input);
+  };
+
+  useEffect(() => {
+    sendMessageRef.current = sendMessage;
+    currentConvIdRef.current = currentConvId;
+  });
+
+  // Leaving a conversation drops any in-progress recording (so its transcript
+  // can't land in the next chat) and stops any reply being read aloud.
+  const stopVoice = () => {
+    voice.cancelListening();
+    voice.stopSpeaking();
+  };
+
+  const handleNewChatClick = () => {
+    stopVoice();
+    startNewChat();
+  };
+
+  const selectConversation = (convId: string) => {
+    if (convId !== currentConvId) stopVoice();
+    setCurrentConvId(convId);
+  };
+
+  const handleMicClick = () => {
+    if (voice.listening) {
+      voice.stopListening();
+      return;
+    }
+    voice.startListening((transcript) =>
+      sendMessageRef.current(transcript, { fromVoice: true })
+    );
   };
 
   const setMessageFeedback = (
@@ -211,20 +280,19 @@ export default function Chat() {
       return;
     }
 
-    if (!currentConvId) {
-      startNewChat();
-    }
-    const convId = currentConvId || Date.now().toString();
+    const convId = currentConvId ?? startNewChat();
+    const uploadVectorDb = effectiveVectorDb;
 
     setAttachments((prev) => ({
       ...prev,
-      [convId]: { filename: file.name, status: "uploading" },
+      [convId]: { filename: file.name, status: "uploading", vectorDb: uploadVectorDb },
     }));
 
     try {
       const form = new FormData();
       form.append("file", file);
       form.append("conversationId", convId);
+      form.append("vectorDb", uploadVectorDb);
 
       const response = await fetch("/api/upload", {
         method: "POST",
@@ -238,7 +306,11 @@ export default function Chat() {
 
       setAttachments((prev) => ({
         ...prev,
-        [convId]: { filename: data.filename || file.name, status: "ready" },
+        [convId]: {
+          filename: data.filename || file.name,
+          status: "ready",
+          vectorDb: uploadVectorDb,
+        },
       }));
     } catch (error) {
       console.error("Attachment upload failed:", error);
@@ -247,6 +319,7 @@ export default function Chat() {
         [convId]: {
           filename: file.name,
           status: "error",
+          vectorDb: uploadVectorDb,
           error: error instanceof Error ? error.message : "Upload failed",
         },
       }));
@@ -278,7 +351,7 @@ export default function Chat() {
       >
         <div className="p-4 border-b border-gray-200">
           <button
-            onClick={startNewChat}
+            onClick={handleNewChatClick}
             className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-800 transition-colors font-medium"
           >
             <Plus size={18} />
@@ -291,7 +364,7 @@ export default function Chat() {
             {conversations.map((conv) => (
               <button
                 key={conv.id}
-                onClick={() => setCurrentConvId(conv.id)}
+                onClick={() => selectConversation(conv.id)}
                 className={`w-full text-left px-3 py-2 rounded-lg transition-colors text-sm ${
                   currentConvId === conv.id
                     ? "bg-gray-200 text-gray-900 font-medium"
@@ -334,7 +407,7 @@ export default function Chat() {
               >
                 <Menu size={20} className="text-gray-700" />
               </button>
-              <h1 className="text-2xl font-semibold text-gray-900">My Gemini App</h1>
+              <h1 className="text-2xl font-semibold text-gray-900">Anu ChatGPT</h1>
             </div>
 
             <div className="relative">
@@ -357,6 +430,88 @@ export default function Chat() {
             </div>
           </div>
         </div>
+
+        {/* View Navigation */}
+        <div className="border-b border-gray-200 bg-white">
+          <div className="max-w-4xl mx-auto px-4 flex items-center gap-1">
+            <button
+              onClick={() => setActiveView("chat")}
+              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                activeView === "chat"
+                  ? "border-blue-600 text-blue-600"
+                  : "border-transparent text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              Chat
+            </button>
+            <button
+              onClick={() => setActiveView("document-qa")}
+              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                activeView === "document-qa"
+                  ? "border-blue-600 text-blue-600"
+                  : "border-transparent text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              Document Q&A
+            </button>
+          </div>
+        </div>
+
+        {/* Document Q&A controls: vector database selector + upload */}
+        {activeView === "document-qa" && (
+          <div className="border-b border-gray-200 bg-white">
+            <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
+              <span className="text-sm font-medium text-gray-600">Vector database</span>
+              <div
+                className={`inline-flex rounded-lg border border-gray-200 overflow-hidden ${
+                  vectorDbLocked ? "opacity-60 cursor-not-allowed" : ""
+                }`}
+                title={
+                  vectorDbLocked
+                    ? "Locked to the document in this chat. Start a new chat to choose again."
+                    : undefined
+                }
+              >
+                <button
+                  type="button"
+                  onClick={() => setVectorDb("pinecone")}
+                  disabled={vectorDbLocked}
+                  className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                    effectiveVectorDb === "pinecone"
+                      ? "bg-blue-600 text-white"
+                      : "bg-white text-gray-600 hover:bg-gray-50"
+                  }`}
+                >
+                  Pinecone
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVectorDb("qdrant")}
+                  disabled={vectorDbLocked}
+                  className={`px-3 py-1.5 text-sm font-medium transition-colors border-l border-gray-200 ${
+                    effectiveVectorDb === "qdrant"
+                      ? "bg-blue-600 text-white"
+                      : "bg-white text-gray-600 hover:bg-gray-50"
+                  }`}
+                >
+                  Qdrant
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleAttachClick}
+                disabled={
+                  !!currentConvId && attachments[currentConvId]?.status === "uploading"
+                }
+                className="flex items-center gap-2 px-4 py-1.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 text-sm font-medium text-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                <Paperclip size={16} />
+                Upload PDF
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto">
@@ -459,13 +614,22 @@ export default function Chat() {
                 />
               </div>
             )}
-            <form onSubmit={handleSubmit} className="flex gap-3">
+            <form onSubmit={handleSubmit} className="flex items-center gap-2 sm:gap-3">
               <input
                 ref={fileInputRef}
                 type="file"
                 accept={ALLOWED_ATTACHMENT_EXTENSIONS.join(",")}
                 onChange={handleFileSelected}
                 className="hidden"
+              />
+              <input
+                type="text"
+                value={voice.listening ? voice.liveTranscript : input}
+                onChange={(e) => setInput(e.target.value)}
+                readOnly={voice.listening}
+                placeholder={voice.listening ? "Listening…" : "Message Gemini"}
+                disabled={loading}
+                className="flex-1 min-w-0 px-4 py-3 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-gray-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all bg-white text-gray-900"
               />
               <button
                 type="button"
@@ -475,26 +639,63 @@ export default function Chat() {
                 }
                 aria-label="Attach a file"
                 title="Attach a file"
-                className="p-3 rounded-full border border-gray-300 bg-white hover:bg-gray-50 text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="flex-shrink-0 p-3 rounded-full border border-gray-300 bg-white hover:bg-gray-50 text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 <Paperclip size={18} />
               </button>
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Message Gemini"
-                disabled={loading}
-                className="flex-1 px-4 py-3 border border-gray-300 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-gray-500 disabled:bg-gray-50 disabled:cursor-not-allowed transition-all bg-white text-gray-900"
-              />
+              <button
+                type="button"
+                onClick={handleMicClick}
+                disabled={loading || !voice.recognitionSupported}
+                aria-pressed={voice.listening}
+                aria-label={voice.listening ? "Stop recording" : "Start voice input"}
+                title={
+                  !voice.recognitionSupported
+                    ? "Voice input isn't supported in this browser. Try Chrome, Edge, or Safari."
+                    : voice.listening
+                    ? "Stop recording"
+                    : "Start voice input"
+                }
+                className={`flex-shrink-0 p-3 rounded-full border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                  voice.listening
+                    ? "border-red-500 bg-red-500 text-white hover:bg-red-600 animate-pulse"
+                    : "border-gray-300 bg-white hover:bg-gray-50 text-gray-600"
+                }`}
+              >
+                {voice.recognitionSupported ? <Mic size={18} /> : <MicOff size={18} />}
+              </button>
+              {voice.synthesisSupported && (
+                <button
+                  type="button"
+                  onClick={voice.toggleMute}
+                  aria-pressed={voice.muted}
+                  aria-label={voice.muted ? "Unmute voice replies" : "Mute voice replies"}
+                  title={voice.muted ? "Unmute voice replies" : "Mute voice replies"}
+                  className="flex-shrink-0 p-3 rounded-full border border-gray-300 bg-white hover:bg-gray-50 text-gray-600 transition-colors"
+                >
+                  {voice.muted ? <VolumeX size={18} /> : <Volume2 size={18} />}
+                </button>
+              )}
               <button
                 type="submit"
-                disabled={loading || !input.trim()}
-                className="px-6 py-3 bg-blue-600 text-white rounded-full hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors font-medium"
+                disabled={loading || voice.listening || !input.trim()}
+                className="flex-shrink-0 px-4 sm:px-6 py-3 bg-blue-600 text-white rounded-full hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors font-medium"
               >
                 Send
               </button>
             </form>
+            {voice.listening ? (
+              <p className="mt-2 text-xs text-red-600 flex items-center gap-1.5" role="status">
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                Listening… pause or click the microphone to send.
+              </p>
+            ) : (
+              voice.voiceError && (
+                <p className="mt-2 text-xs text-red-600" role="alert">
+                  {voice.voiceError}
+                </p>
+              )
+            )}
           </div>
         </div>
       </div>

@@ -8,8 +8,6 @@ export interface GeminiModelOption {
 export const GEMINI_MODELS: GeminiModelOption[] = [
   { id: "gemini-3-flash-preview", label: "Gemini 3 Flash (Preview)" },
   { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro (Preview)" },
-  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
-  { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
 ];
 
 export const DEFAULT_GEMINI_MODEL = GEMINI_MODELS[0].id;
