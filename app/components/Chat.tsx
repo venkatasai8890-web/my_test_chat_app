@@ -11,8 +11,6 @@ import {
   Paperclip,
   Mic,
   MicOff,
-  Volume2,
-  VolumeX,
 } from "lucide-react";
 import { GEMINI_MODELS, DEFAULT_GEMINI_MODEL } from "@/app/lib/models";
 import {
@@ -62,12 +60,11 @@ export default function Chat() {
   const voice = useVoiceChat();
   // Guards against a second send starting before `loading` re-renders.
   const sendingRef = useRef(false);
-  // Voice transcripts arrive asynchronously, so they go through refs that
-  // always point at the latest render's send function and conversation.
+  // Voice transcripts arrive asynchronously, so they go through a ref that
+  // always points at the latest render's send function.
   const sendMessageRef = useRef<(text: string, options?: { fromVoice?: boolean }) => void>(
     () => {}
   );
-  const currentConvIdRef = useRef(currentConvId);
 
   const currentConv = conversations.find((c) => c.id === currentConvId);
   const messages = currentConv?.messages || [];
@@ -151,12 +148,6 @@ export default function Chat() {
         )
       );
 
-      // Only successful replies to voice messages are spoken, and only if the
-      // user is still viewing that conversation.
-      if (fromVoice && currentConvIdRef.current === convId) {
-        voice.speak(assistantMessage.content);
-      }
-
       if (messages.length === 0) {
         const title = userMessage.content.substring(0, 30) + (userMessage.content.length > 30 ? "..." : "");
         setConversations((prev) =>
@@ -197,23 +188,17 @@ export default function Chat() {
 
   useEffect(() => {
     sendMessageRef.current = sendMessage;
-    currentConvIdRef.current = currentConvId;
   });
 
-  // Leaving a conversation drops any in-progress recording (so its transcript
-  // can't land in the next chat) and stops any reply being read aloud.
-  const stopVoice = () => {
-    voice.cancelListening();
-    voice.stopSpeaking();
-  };
-
+  // Leaving a conversation drops any in-progress recording so its transcript
+  // can't land in the next chat.
   const handleNewChatClick = () => {
-    stopVoice();
+    voice.cancelListening();
     startNewChat();
   };
 
   const selectConversation = (convId: string) => {
-    if (convId !== currentConvId) stopVoice();
+    if (convId !== currentConvId) voice.cancelListening();
     setCurrentConvId(convId);
   };
 
@@ -664,18 +649,6 @@ export default function Chat() {
               >
                 {voice.recognitionSupported ? <Mic size={18} /> : <MicOff size={18} />}
               </button>
-              {voice.synthesisSupported && (
-                <button
-                  type="button"
-                  onClick={voice.toggleMute}
-                  aria-pressed={voice.muted}
-                  aria-label={voice.muted ? "Unmute voice replies" : "Mute voice replies"}
-                  title={voice.muted ? "Unmute voice replies" : "Mute voice replies"}
-                  className="flex-shrink-0 p-3 rounded-full border border-gray-300 bg-white hover:bg-gray-50 text-gray-600 transition-colors"
-                >
-                  {voice.muted ? <VolumeX size={18} /> : <Volume2 size={18} />}
-                </button>
-              )}
               <button
                 type="submit"
                 disabled={loading || voice.listening || !input.trim()}

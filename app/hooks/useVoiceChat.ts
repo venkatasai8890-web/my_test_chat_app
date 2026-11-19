@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 const RECOGNITION_LANG = "en-US";
-// Chrome silently stops long utterances after ~15s, so replies are spoken
-// as a queue of sentence-sized chunks instead of one long utterance.
-const MAX_UTTERANCE_CHARS = 200;
 
 const UNSUPPORTED_MESSAGE =
   "Voice input isn't supported in this browser. Try Chrome, Edge, or Safari.";
@@ -26,33 +23,6 @@ function getRecognitionConstructor(): SpeechRecognitionConstructor | undefined {
 
 const subscribeNoop = () => () => {};
 
-function stripMarkdown(text: string): string {
-  return text
-    .replace(/```[\s\S]*?```/g, " Code omitted. ")
-    .replace(/`([^`]*)`/g, "$1")
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
-    .replace(/^\s*(?:[-*+]|\d+\.)\s+/gm, "")
-    .replace(/([*_~]{1,3})([^*_~\n]+)\1/g, "$2")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function splitForSpeech(text: string): string[] {
-  const sentences = text.match(/[^.!?]+[.!?]*\s*/g) ?? [];
-  const chunks: string[] = [];
-  let current = "";
-  for (const sentence of sentences) {
-    if (current && current.length + sentence.length > MAX_UTTERANCE_CHARS) {
-      chunks.push(current.trim());
-      current = "";
-    }
-    current += sentence;
-  }
-  if (current.trim()) chunks.push(current.trim());
-  return chunks;
-}
-
 export function useVoiceChat() {
   // Read browser support without touching window during server rendering.
   const recognitionSupported = useSyncExternalStore(
@@ -60,46 +30,15 @@ export function useVoiceChat() {
     () => !!getRecognitionConstructor(),
     () => false
   );
-  const synthesisSupported = useSyncExternalStore(
-    subscribeNoop,
-    () => "speechSynthesis" in window,
-    () => false
-  );
 
   const [listening, setListening] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState("");
   const [voiceError, setVoiceError] = useState<string | null>(null);
-  const [muted, setMuted] = useState(false);
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const mutedRef = useRef(false);
   // Each recording gets a session number; callbacks from an older session
   // (cancelled, or replaced by a newer recording) are ignored.
   const sessionRef = useRef(0);
-
-  const stopSpeaking = useCallback(() => {
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
-    }
-  }, []);
-
-  const speak = useCallback((text: string) => {
-    if (mutedRef.current || !("speechSynthesis" in window)) return;
-    const synth = window.speechSynthesis;
-    synth.cancel();
-    for (const chunk of splitForSpeech(stripMarkdown(text))) {
-      const utterance = new SpeechSynthesisUtterance(chunk);
-      utterance.lang = RECOGNITION_LANG;
-      synth.speak(utterance);
-    }
-  }, []);
-
-  const toggleMute = useCallback(() => {
-    const next = !mutedRef.current;
-    mutedRef.current = next;
-    setMuted(next);
-    if (next) stopSpeaking();
-  }, [stopSpeaking]);
 
   // Discards the current recording without sending its transcript.
   const cancelListening = useCallback(() => {
@@ -123,7 +62,6 @@ export function useVoiceChat() {
         return;
       }
 
-      stopSpeaking();
       cancelListening();
 
       const session = sessionRef.current;
@@ -178,29 +116,23 @@ export function useVoiceChat() {
         setVoiceError("Voice input failed to start. Try again.");
       }
     },
-    [cancelListening, stopSpeaking]
+    [cancelListening]
   );
 
   useEffect(() => {
     return () => {
       sessionRef.current++;
       recognitionRef.current?.abort();
-      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     };
   }, []);
 
   return {
     recognitionSupported,
-    synthesisSupported,
     listening,
     liveTranscript,
     voiceError,
-    muted,
     startListening,
     stopListening,
     cancelListening,
-    speak,
-    stopSpeaking,
-    toggleMute,
   };
 }

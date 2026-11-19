@@ -43,3 +43,27 @@ next-env.d.ts
 
 # runtime-generated feedback log
 /feedback.csv
+
+# Environment variables and API keys
+.env
+.env.*
+!.env.example
+!.env.local.example
+
+# Python virtual environments
+venv/
+.venv/
+**/venv/
+**/.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local databases and uploaded files
+*.db
+*.sqlite
+*.sqlite3
+rag-service/uploads/
+rag-service/temp/
